@@ -53,7 +53,10 @@ function createSimpleGestureEvent(type, direction) {
 
 add_task(async () => {
   await SpecialPowers.pushPrefEnv({
-    set: [["ui.swipeAnimationEnabled", false]],
+    set: [
+      ["ui.swipeAnimationEnabled", false],
+      ["browser.history_swipe_animation.disabled", false],
+    ],
   });
 
   // Open a new browser window and load two pages so that the browser can go
@@ -93,7 +96,10 @@ add_task(async () => {
     "MozSwipeGestureMayStart",
     SimpleGestureEvent.DIRECTION_LEFT
   );
-  newWindow.gGestureSupport._shouldDoSwipeGesture(event);
+  ok(
+    newWindow.gGestureSupport._shouldDoSwipeGesture(event),
+    "History swipes are accepted even when swipe animations are disabled"
+  );
 
   // Assuming we are on LTR environment.
   is(
@@ -106,11 +112,72 @@ add_task(async () => {
     "MozSwipeGestureMayStart",
     SimpleGestureEvent.DIRECTION_RIGHT
   );
-  newWindow.gGestureSupport._shouldDoSwipeGesture(event);
+  ok(
+    newWindow.gGestureSupport._shouldDoSwipeGesture(event),
+    "History swipes are accepted even when swipe animations are disabled"
+  );
   is(
     event.allowedDirections,
     SimpleGestureEvent.DIRECTION_LEFT,
     "Allows only swiping to left, i.e. backward"
+  );
+
+  const animation = newWindow.gHistorySwipeAnimation;
+  ok(
+    animation.active,
+    "Swipe indicators are active without platform animation support"
+  );
+
+  function checkIndicator(direction, boxName) {
+    animation.startAnimation();
+    animation.updateAnimation({
+      event: createSimpleGestureEvent("MozSwipeGestureUpdate", direction),
+      delta: direction === SimpleGestureEvent.DIRECTION_LEFT ? 0.3 : -0.3,
+    });
+    const box = animation[boxName];
+    ok(!box.collapsed, "The arrow for the swipe direction is visible");
+    ok(
+      box.querySelector("svg").classList.contains("will-navigate"),
+      "The arrow highlights when the navigation threshold is reached"
+    );
+    animation._removeBoxes();
+  }
+
+  checkIndicator(SimpleGestureEvent.DIRECTION_LEFT, "_prevBox");
+  const browser = newWindow.gBrowser.selectedBrowser;
+  let loaded = BrowserTestUtils.browserLoaded(browser, false, "about:mozilla");
+  newWindow.gGestureSupport.handleEvent(
+    createSimpleGestureEvent("MozSwipeGesture", SimpleGestureEvent.DIRECTION_LEFT)
+  );
+  await loaded;
+  is(
+    browser.currentURI.spec,
+    "about:mozilla",
+    "Swiping back loads the previous page"
+  );
+
+  event = createSimpleGestureEvent(
+    "MozSwipeGestureMayStart",
+    SimpleGestureEvent.DIRECTION_RIGHT
+  );
+  ok(
+    newWindow.gGestureSupport._shouldDoSwipeGesture(event),
+    "Forward swipes are accepted without animations"
+  );
+  ok(
+    event.allowedDirections & SimpleGestureEvent.DIRECTION_RIGHT,
+    "Forward navigation is available after going back"
+  );
+  checkIndicator(SimpleGestureEvent.DIRECTION_RIGHT, "_nextBox");
+  loaded = BrowserTestUtils.browserLoaded(browser, false, "about:about");
+  newWindow.gGestureSupport.handleEvent(
+    createSimpleGestureEvent("MozSwipeGesture", SimpleGestureEvent.DIRECTION_RIGHT)
+  );
+  await loaded;
+  is(
+    browser.currentURI.spec,
+    "about:about",
+    "Swiping forward loads the next page"
   );
 
   await BrowserTestUtils.closeWindow(newWindow);
